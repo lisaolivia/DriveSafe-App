@@ -70,16 +70,16 @@ class BleManager(
 
                 if (status == BluetoothGatt.GATT_SUCCESS) {
 
-                    Log.d("BLE_DISCOVER", "Total services found: ${gatt.services.size}")
-
-                    for (service in gatt.services) {
-
-                        Log.d("BLE_DISCOVER", "Service UUID: ${service.uuid}")
-
-                        for (characteristic in service.characteristics) {
-                            Log.d("BLE_DISCOVER", "  -> Characteristic UUID: ${characteristic.uuid}")
-                        }
-                    }
+//                    Log.d("BLE_DISCOVER", "Total services found: ${gatt.services.size}")
+//
+//                    for (service in gatt.services) {
+//
+//                        Log.d("BLE_DISCOVER", "Service UUID: ${service.uuid}")
+//
+//                        for (characteristic in service.characteristics) {
+//                            Log.d("BLE_DISCOVER", "  -> Characteristic UUID: ${characteristic.uuid}")
+//                        }
+//                    }
 
                     val service =
                         gatt.getService(
@@ -90,7 +90,7 @@ class BleManager(
                         Log.d("BLE", "Service Found")
                         subscribeToStatus()
                     } else {
-                        Log.e("BLE", "Service NOT found - cek UUID atau ESP32 belum bikin service")
+                        Log.e("BLE", "Service NOT found")
                     }
                 }
             }
@@ -114,6 +114,11 @@ class BleManager(
             ) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     Log.d("BLE", "Subscribed successfully to ${descriptor.characteristic.uuid}")
+
+                    // Setelah STATUS berhasil disubscribe, lanjut subscribe EVENT
+                    if (descriptor.characteristic.uuid == BleConstants.STATUS_CHARACTERISTIC_UUID) {
+                        subscribeToEvent()
+                    }
                 } else {
                     Log.e("BLE", "Failed to subscribe, status=$status")
                 }
@@ -250,7 +255,7 @@ class BleManager(
     }
 
     @SuppressLint("MissingPermission")
-    fun subscribeToStatus() {
+    private fun subscribeToCharacteristic(characteristicUuid: java.util.UUID) {
 
         val service =
             bluetoothGatt?.getService(BleConstants.SERVICE_UUID) ?: run {
@@ -259,18 +264,18 @@ class BleManager(
             }
 
         val characteristic =
-            service.getCharacteristic(BleConstants.STATUS_CHARACTERISTIC_UUID) ?: run {
-                Log.e("BLE", "Cannot subscribe: status characteristic not found")
+            service.getCharacteristic(characteristicUuid) ?: run {
+                Log.e("BLE", "Cannot subscribe: characteristic $characteristicUuid not found")
                 return
             }
 
         val success = bluetoothGatt?.setCharacteristicNotification(characteristic, true)
-        Log.d("BLE", "setCharacteristicNotification result: $success")
+        Log.d("BLE", "setCharacteristicNotification($characteristicUuid) result: $success")
 
         val cccd = characteristic.getDescriptor(BleConstants.CCCD_UUID)
 
         if (cccd == null) {
-            Log.e("BLE", "CCCD descriptor not found on status characteristic")
+            Log.e("BLE", "CCCD descriptor not found on $characteristicUuid")
             return
         }
 
@@ -278,5 +283,12 @@ class BleManager(
         bluetoothGatt?.writeDescriptor(cccd)
     }
 
+    fun subscribeToStatus() {
+        subscribeToCharacteristic(BleConstants.STATUS_CHARACTERISTIC_UUID)
+    }
+
+    fun subscribeToEvent() {
+        subscribeToCharacteristic(BleConstants.EVENT_CHARACTERISTIC_UUID)
+    }
 
 }
