@@ -47,7 +47,10 @@ class MainActivity : ComponentActivity() {
 
         scanner = BleScanner(this) { device ->
             scanner.stopScan()
-            bleManager.connect(device)
+            // Delay 300ms sebelum connect, biar radio BLE sempet "reset" mode
+            android.os.Handler(mainLooper).postDelayed({
+                bleManager.connect(device)
+            }, 300)
         }
 
         setContent {

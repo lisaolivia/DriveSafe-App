@@ -36,7 +36,13 @@ class BleScanner(
                 val device = result.device
                 val name = device.name ?: return
 
-                if (name == BleConstants.DEVICE_NAME) {
+//                // SEMENTARA: log semua device yang kedetect, gak difilter
+//                Log.d(
+//                    "BLE_SCAN_ALL",
+//                    "Found: name=$name, address=${device.address}, rssi=${result.rssi}"
+//                )
+
+                if (name.startsWith(BleConstants.DEVICE_NAME_PREFIX, ignoreCase = true)) {
 
                     Log.d(
                         "BLE",
