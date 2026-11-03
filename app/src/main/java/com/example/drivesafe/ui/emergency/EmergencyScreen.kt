@@ -23,7 +23,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.CarCrash
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.GppGood
@@ -90,7 +89,7 @@ private val CountdownRed = Color(0xFFC62828)
 
 /**
  * Layar penuh saat kecelakaan. Tiga tahap:
- * - hitung mundur dengan "Saya baik-baik saja" / "Kirim sekarang" (st = COUNTDOWN)
+ * - hitung mundur dengan "Saya baik-baik saja" (st = COUNTDOWN)
  * - "False alarm dibatalkan" kalau alarm dibatalkan sebelum SMS terkirim
  * - rincian kejadian + kontak yang diberitahu (ALERT, EVENT SENDING lalu SENT)
  */
@@ -101,14 +100,12 @@ fun EmergencyScreen(
     event: AccidentEvent?,
     status: DeviceStatusPayload?,
     config: DeviceConfig,
-    isSendingNow: Boolean,
     onCancel: () -> Unit,
-    onSendNow: () -> Unit,
     onDismissCancelled: () -> Unit,
     onDismiss: () -> Unit
 ) {
     when {
-        countdown != null -> CountdownStage(countdown, isSendingNow, onCancel, onSendNow)
+        countdown != null -> CountdownStage(countdown, onCancel)
         // EVENT berarti SMS dikirim, jadi rincian kecelakaan selalu menang atas layar "dibatalkan"
         event != null -> AlertStage(event, status, config, onCancel, onDismiss)
         cancelledAt != null -> CancelledStage(cancelledAt, onDismissCancelled)
@@ -121,12 +118,7 @@ fun EmergencyScreen(
 // ======================================================================
 
 @Composable
-private fun CountdownStage(
-    countdown: CountdownUi,
-    isSendingNow: Boolean,
-    onCancel: () -> Unit,
-    onSendNow: () -> Unit
-) {
+private fun CountdownStage(countdown: CountdownUi, onCancel: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
@@ -219,31 +211,6 @@ private fun CountdownStage(
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp
                 )
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = onSendNow,
-                enabled = !isSendingNow,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .shadow(6.dp, RoundedCornerShape(10.dp)),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = DangerRedDark,
-                    contentColor = Color.White,
-                    disabledContainerColor = DangerRedDark.copy(alpha = 0.7f),
-                    disabledContentColor = Color.White
-                )
-            ) {
-                if (isSendingNow) {
-                    CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null, modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.width(10.dp))
-                Text("KIRIM SEKARANG", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
     }

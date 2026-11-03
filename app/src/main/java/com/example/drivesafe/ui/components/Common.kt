@@ -220,11 +220,11 @@ fun DsTextField(
 
 /** Label kecil berwarna, misal "Terhubung" atau "Belum dikirim". */
 @Composable
-fun Pill(text: String, color: Color, modifier: Modifier = Modifier) {
+fun Pill(text: String, color: Color, modifier: Modifier = Modifier, container: Color = color.copy(alpha = 0.14f)) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
-        color = color.copy(alpha = 0.14f)
+        color = container
     ) {
         Text(
             text,

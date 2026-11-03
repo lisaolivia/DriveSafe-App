@@ -1,6 +1,7 @@
 package com.example.drivesafe.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.ContactPhone
 import androidx.compose.material.icons.outlined.Dashboard
@@ -48,10 +48,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.drivesafe.R
 import com.example.drivesafe.model.DeviceConfig
 import com.example.drivesafe.model.DeviceStatus
 import com.example.drivesafe.ui.components.NoticeBox
@@ -63,10 +68,12 @@ import com.example.drivesafe.ui.home.HomeScreen
 import com.example.drivesafe.ui.theme.AppBackground
 import com.example.drivesafe.ui.theme.BrandBlue
 import com.example.drivesafe.ui.theme.BrandBlueDark
+import com.example.drivesafe.ui.theme.BrandYellow
 import com.example.drivesafe.ui.theme.DangerRed
 import com.example.drivesafe.ui.theme.SafeGreen
 import com.example.drivesafe.ui.theme.SafeGreenSoft
 import com.example.drivesafe.ui.theme.SurfaceMuted
+import com.example.drivesafe.ui.theme.SurfaceWhite
 import com.example.drivesafe.ui.theme.TextPrimary
 import com.example.drivesafe.ui.theme.TextSecondary
 import com.example.drivesafe.ui.theme.WarnAmber
@@ -111,6 +118,10 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
 
     val notices = buildNotices(ui, config, needsSync)
 
+    fun autoSync() {
+        if (device.ui.value.isOnline) device.syncNow()
+    }
+
     Box(Modifier.fillMaxSize()) {
 
         Scaffold(
@@ -131,7 +142,10 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
                     TAB_HOME -> HomeScreen(
                         ui = ui,
                         config = config,
-                        onOpenDevice = { tab = TAB_DEVICE },
+                        onScan = device::startScan,
+                        onStopScan = device::stopScan,
+                        onConnect = device::connect,
+                        onDisconnect = device::disconnect,
                         onSos = device::simulateCrash
                     )
 
@@ -139,25 +153,38 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
                         ui = ui,
                         config = config,
                         needsSync = needsSync,
-                        onAdd = contacts::addContact,
-                        onUpdate = contacts::updateContact,
-                        onDelete = contacts::deleteContact,
-                        onPrimary = contacts::setPrimary,
+                        // Setiap perubahan kontak langsung dikirim ke alat kalau sedang terhubung
+                        onAdd = { name, phone, done ->
+                            contacts.addContact(name, phone) { error ->
+                                done(error)
+                                if (error == null) autoSync()
+                            }
+                        },
+                        onUpdate = { id, name, phone, done ->
+                            contacts.updateContact(id, name, phone) { error ->
+                                done(error)
+                                if (error == null) autoSync()
+                            }
+                        },
+                        onDelete = { id -> contacts.deleteContact(id) { autoSync() } },
+                        onPrimary = { id -> contacts.setPrimary(id) { autoSync() } },
                         onSync = device::syncNow,
-                        onImport = device::importFromDevice,
-                        onRefresh = { device.readDeviceConfig() }
+                        onImport = device::importFromDevice
                     )
 
                     else -> DeviceScreen(
                         ui = ui,
                         config = config,
                         needsSync = needsSync,
-                        onScan = device::startScan,
-                        onStopScan = device::stopScan,
-                        onConnect = device::connect,
-                        onDisconnect = device::disconnect,
+                        onOpenHome = { tab = TAB_HOME },
                         onForget = device::forgetDevice,
-                        onSaveSettings = contacts::saveSettings,
+                        // Sama seperti kontak: pengaturan langsung dikirim ke alat kalau terhubung
+                        onSaveSettings = { owner, profile, countdown, done ->
+                            contacts.saveSettings(owner, profile, countdown) { error ->
+                                done(error)
+                                if (error == null) autoSync()
+                            }
+                        },
                         onSync = device::syncNow,
                         onRecalibrate = device::recalibrate,
                         onCheckBalance = device::checkBalance,
@@ -179,7 +206,7 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
                         showNotifications = false
                         when (action) {
                             NoticeAction.Contacts -> tab = TAB_CONTACTS
-                            NoticeAction.Device -> tab = TAB_DEVICE
+                            NoticeAction.Home -> tab = TAB_HOME
                             NoticeAction.Sync -> device.syncNow()
                         }
                     }
@@ -194,9 +221,7 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
                 event = ui.lastEvent,
                 status = ui.status,
                 config = config,
-                isSendingNow = ui.isSendingNow,
                 onCancel = device::cancelAlarm,
-                onSendNow = device::sendNow,
                 onDismissCancelled = device::dismissCancelled,
                 onDismiss = {
                     alertDismissed = true
@@ -212,7 +237,7 @@ fun DriveSafeRoot(device: DeviceViewModel, contacts: ContactViewModel) {
 @Composable
 private fun TopHeader(hasNotices: Boolean, onBell: () -> Unit) {
     Surface(
-        color = Color(0xFFF1F3F5),
+        color = SurfaceWhite,
         shape = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp),
         modifier = Modifier
             .fillMaxWidth()
@@ -242,11 +267,23 @@ private fun TopHeader(hasNotices: Boolean, onBell: () -> Unit) {
     }
 }
 
+/** Maskot + tulisan "Drive" biru dan "Safe" kuning, seperti di logo. */
 @Composable
-fun BrandMark(modifier: Modifier = Modifier, color: Color = BrandBlueDark) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(Icons.Filled.Shield, contentDescription = null, tint = color, modifier = Modifier.size(26.dp))
-        Text("DriveSafe", color = color, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+fun BrandMark(modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Image(
+            painter = painterResource(R.drawable.logo_mascot),
+            contentDescription = null,
+            modifier = Modifier.height(30.dp)
+        )
+        Text(
+            buildAnnotatedString {
+                withStyle(SpanStyle(color = BrandBlueDark)) { append("Drive") }
+                withStyle(SpanStyle(color = BrandYellow)) { append("Safe") }
+            },
+            fontSize = 22.sp,
+            fontWeight = FontWeight.ExtraBold
+        )
     }
 }
 
@@ -263,7 +300,7 @@ private val NAV_ITEMS = listOf(
 @Composable
 private fun BottomNav(selected: Int, onSelect: (Int) -> Unit) {
     Surface(
-        color = Color(0xFFF1F3F5),
+        color = SurfaceWhite,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         modifier = Modifier
             .fillMaxWidth()
@@ -308,7 +345,7 @@ private fun BottomNav(selected: Int, onSelect: (Int) -> Unit) {
 // ---------- Notifikasi (lonceng) ----------
 
 private enum class NoticeLevel { Ok, Warn, Bad }
-private enum class NoticeAction { Contacts, Device, Sync }
+private enum class NoticeAction { Contacts, Home, Sync }
 
 private class Notice(
     val level: NoticeLevel,
@@ -327,7 +364,7 @@ private fun buildNotices(ui: DeviceUiState, config: DeviceConfig, needsSync: Boo
                     NoticeLevel.Warn,
                     "Alat tidak terhubung. Alat tetap mendeteksi kecelakaan dan mengirim SMS tanpa aplikasi, " +
                             "tapi alarm palsu tidak bisa dibatalkan selama tidak terhubung.",
-                    "Hubungkan", NoticeAction.Device
+                    "Hubungkan", NoticeAction.Home
                 )
             )
         }

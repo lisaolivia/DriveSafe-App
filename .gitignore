@@ -1,3 +1,8 @@
 .pio
 .vscode/.browse.c_cpp.db*
 include/wifi_credentials.h
+
+# Kunci tanda tangan APK release (jangan di-commit)
+keystore/
+keystore.properties
+release/

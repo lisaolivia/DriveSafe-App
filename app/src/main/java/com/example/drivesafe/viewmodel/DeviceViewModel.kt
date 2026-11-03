@@ -48,8 +48,7 @@ data class DeviceUiState(
     val isReadingConfig: Boolean = false,
     val isCheckingBalance: Boolean = false,
     /** Waktu (epoch ms) alarm dibatalkan sebelum SMS terkirim. Non-null = tampilkan layar "False alarm". */
-    val cancelledAt: Long? = null,
-    val isSendingNow: Boolean = false
+    val cancelledAt: Long? = null
 ) {
     val isOnline: Boolean get() = connection == ConnectionState.READY
 }
@@ -57,6 +56,7 @@ data class DeviceUiState(
 class DeviceViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = (app as DriveSafeApp).bleRepository
+    private val configRepo = (app as DriveSafeApp).configRepository
 
     private val _ui = MutableStateFlow(DeviceUiState())
     val ui: StateFlow<DeviceUiState> = _ui.asStateFlow()
@@ -66,6 +66,9 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     private var peakCountdown = 0
+
+    /** Ada perubahan baru saat sinkron sedang jalan: kirim sekali lagi setelah selesai. */
+    private var syncAgain = false
     private var wasReady = false
     private var previousStatus: DeviceStatus? = null
 
@@ -79,7 +82,7 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
 
                 // Begitu siap, baca isi alat supaya halaman Kontak menampilkan data yang sebenarnya
                 val ready = v == ConnectionState.READY
-                if (ready && !wasReady) readDeviceConfig(silent = true)
+                if (ready && !wasReady) viewModelScope.launch { onConnectedReady() }
                 wasReady = ready
             }
         }
@@ -150,6 +153,23 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
             totalSeconds = peakCountdown,
             canCancel = elapsed >= MIN_CANCEL_ELAPSED_SECONDS
         )
+    }
+
+    /**
+     * Begitu tersambung: baca isi alat, lalu kirim kontak/pengaturan yang tertunda (diubah saat offline).
+     * Dilakukan berurutan supaya baca dan tulis CONFIG tidak bertabrakan. Kalau daftar kontak di
+     * aplikasi kosong, tidak dikirim, supaya kontak yang tersimpan di alat tidak terhapus.
+     */
+    private suspend fun onConnectedReady() {
+        if (!_ui.value.isReadingConfig) {
+            _ui.update { it.copy(isReadingConfig = true) }
+            repo.refreshDeviceConfig()
+            _ui.update { it.copy(isReadingConfig = false) }
+        }
+
+        val busy = _ui.value.status?.status.let { it == DeviceStatus.COUNTDOWN || it == DeviceStatus.ALERT }
+        val hasLocalContacts = configRepo.currentConfig().contacts.isNotEmpty()
+        if (_ui.value.isOnline && _ui.value.needsSync && hasLocalContacts && !busy) syncNow()
     }
 
     // ---------- Koneksi ----------
@@ -224,25 +244,6 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
         repo.clearEvent()
     }
 
-    /**
-     * Tombol "KIRIM SEKARANG": lewati sisa hitung mundur. Butuh firmware yang mengenal SENDNOW;
-     * kalau alat tidak pindah ke ALERT, SMS tetap terkirim otomatis saat hitung mundur habis.
-     */
-    fun sendNow() {
-        if (_ui.value.isSendingNow) return
-        _ui.update { it.copy(isSendingNow = true) }
-
-        viewModelScope.launch {
-            val confirmed = repo.sendNow()
-            _ui.update { it.copy(isSendingNow = false) }
-            if (!confirmed) {
-                _messages.emit(
-                    "Alat belum merespons KIRIM SEKARANG. SMS tetap dikirim otomatis saat hitung mundur habis."
-                )
-            }
-        }
-    }
-
     // ---------- Baca isi alat ----------
 
     fun readDeviceConfig(silent: Boolean = false) {
@@ -298,12 +299,15 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
 
     fun syncNow() {
 
-        if (_ui.value.isSyncing) return
+        if (_ui.value.isSyncing) {
+            syncAgain = true
+            return
+        }
         _ui.update { it.copy(isSyncing = true) }
 
         viewModelScope.launch {
             val message = when (val result = repo.syncConfig()) {
-                SyncResult.Success -> "Tersinkronisasi ke alat"
+                SyncResult.Success -> "Tersimpan di alat"
                 SyncResult.NotConnected -> "Alat belum terhubung"
                 is SyncResult.Invalid -> result.message
                 SyncResult.WriteFailed -> "Gagal mengirim ke alat. Coba lagi."
@@ -314,6 +318,11 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
             }
             _ui.update { it.copy(isSyncing = false) }
             _messages.emit(message)
+
+            if (syncAgain) {
+                syncAgain = false
+                syncNow()
+            }
         }
     }
 

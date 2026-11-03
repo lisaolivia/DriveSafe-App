@@ -32,12 +32,18 @@ class ContactViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { onResult(configRepo.updateContact(id, name, phone)) }
     }
 
-    fun deleteContact(id: String) {
-        viewModelScope.launch { configRepo.deleteContact(id) }
+    fun deleteContact(id: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            configRepo.deleteContact(id)
+            onDone()
+        }
     }
 
-    fun setPrimary(id: String) {
-        viewModelScope.launch { configRepo.setPrimary(id) }
+    fun setPrimary(id: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            configRepo.setPrimary(id)
+            onDone()
+        }
     }
 
     fun saveSettings(

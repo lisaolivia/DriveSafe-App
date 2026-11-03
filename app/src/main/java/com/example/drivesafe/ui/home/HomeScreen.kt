@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material.icons.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.LocationOn
@@ -47,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,12 +60,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.drivesafe.model.BleDevice
 import com.example.drivesafe.model.ConnectionState
 import com.example.drivesafe.model.DeviceConfig
 import com.example.drivesafe.model.DeviceStatus
 import com.example.drivesafe.ui.components.DsCard
 import com.example.drivesafe.ui.components.Pill
 import com.example.drivesafe.ui.components.profileLabel
+import com.example.drivesafe.ui.components.signalLabel
 import com.example.drivesafe.ui.components.statusColor
 import com.example.drivesafe.ui.components.statusLabel
 import com.example.drivesafe.ui.theme.BorderLight
@@ -91,11 +93,18 @@ private const val SOS_HOLD_MS = 3_000
 fun HomeScreen(
     ui: DeviceUiState,
     config: DeviceConfig,
-    onOpenDevice: () -> Unit,
+    onScan: () -> Unit,
+    onStopScan: () -> Unit,
+    onConnect: (BleDevice) -> Unit,
+    onDisconnect: () -> Unit,
     onSos: () -> Unit
 ) {
     val status = ui.status
     val online = ui.isOnline && status != null
+
+    // Sudah pernah menekan "cari" di layar ini, supaya bisa bilang "tidak ditemukan" setelah scan selesai
+    var hasScanned by rememberSaveable { mutableStateOf(false) }
+    var confirmDisconnect by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -104,7 +113,25 @@ fun HomeScreen(
             .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ConnectionBanner(ui, onClick = onOpenDevice)
+        ConnectionBanner(
+            ui = ui,
+            onClick = {
+                when {
+                    ui.isOnline -> confirmDisconnect = true
+                    ui.connection == ConnectionState.SCANNING -> onStopScan()
+                    ui.connection == ConnectionState.CONNECTING ||
+                            ui.connection == ConnectionState.CONNECTED -> onDisconnect()
+                    else -> {
+                        hasScanned = true
+                        onScan()
+                    }
+                }
+            }
+        )
+
+        if (!ui.isOnline) {
+            DevicePicker(ui = ui, hasScanned = hasScanned, onConnect = onConnect)
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -118,7 +145,7 @@ fun HomeScreen(
         }
 
         if (!online) {
-            DsCard(container = SurfaceMuted, onClick = onOpenDevice, contentPadding = 20.dp) {
+            DsCard(container = SurfaceMuted, contentPadding = 20.dp) {
                 Text(
                     "Tidak Tersedia",
                     fontSize = 17.sp,
@@ -209,17 +236,54 @@ fun HomeScreen(
             onTrigger = onSos
         )
     }
+
+    if (confirmDisconnect) {
+        AlertDialog(
+            onDismissRequest = { confirmDisconnect = false },
+            containerColor = Color.White,
+            title = { Text("Putuskan sambungan?", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Text(
+                    "Alat tetap mendeteksi kecelakaan dan mengirim SMS, tapi alarm palsu tidak bisa " +
+                            "dibatalkan selama tidak terhubung."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDisconnect = false
+                    onDisconnect()
+                }) { Text("Putuskan", color = DangerRed, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Batal") } }
+        )
+    }
 }
 
 // ---------- Banner koneksi ----------
 
+/** Banner sekaligus tombol: cari / hentikan / batal / putuskan, tergantung keadaan. */
 @Composable
 private fun ConnectionBanner(ui: DeviceUiState, onClick: () -> Unit) {
-    val connecting = ui.connection == ConnectionState.CONNECTING || ui.connection == ConnectionState.CONNECTED
     val online = ui.isOnline
+    val scanning = ui.connection == ConnectionState.SCANNING
+    val connecting = ui.connection == ConnectionState.CONNECTING || ui.connection == ConnectionState.CONNECTED
 
     val container = if (online) BrandBlue else SurfaceMuted
     val content = if (online) Color.White else TextPrimary
+
+    val title = when {
+        online -> "Terhubung ke ${ui.deviceName ?: "DriveSafe"}"
+        connecting -> "Menghubungkan ke ${ui.deviceName ?: "alat"}…"
+        scanning -> "Mencari perangkat…"
+        ui.connection == ConnectionState.ERROR -> "Gagal terhubung"
+        else -> "Tidak Terhubung"
+    }
+    val action = when {
+        online -> "Putuskan"
+        connecting -> "Batal"
+        scanning -> "Hentikan"
+        else -> "Cari"
+    }
 
     Surface(
         onClick = onClick,
@@ -233,39 +297,85 @@ private fun ConnectionBanner(ui: DeviceUiState, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Icon(
-                when {
-                    online -> Icons.Filled.Bluetooth
-                    connecting || ui.connection == ConnectionState.SCANNING -> Icons.Filled.BluetoothSearching
-                    else -> Icons.Filled.BluetoothDisabled
-                },
-                contentDescription = null,
-                tint = content
-            )
-            Column(Modifier.weight(1f)) {
-                Text("Koneksi Perangkat", color = content.copy(alpha = 0.85f), fontSize = 12.sp)
-                Text(
-                    when {
-                        online -> "Terhubung ke ${ui.deviceName ?: "DriveSafe"}"
-                        connecting -> "Menghubungkan ke ${ui.deviceName ?: "alat"}…"
-                        ui.connection == ConnectionState.SCANNING -> "Mencari alat…"
-                        else -> "Tidak Terhubung"
-                    },
-                    color = content,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
+            if (scanning || connecting) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = BrandBlue)
+            } else {
+                Icon(
+                    if (online) Icons.Filled.Bluetooth else Icons.Filled.BluetoothDisabled,
+                    contentDescription = null,
+                    tint = content
                 )
             }
-            if (connecting) {
-                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = content)
-            } else {
-                Box(
-                    Modifier
-                        .size(8.dp)
-                        .background(if (online) SafeGreen else TextPrimary, CircleShape)
+            Column(Modifier.weight(1f)) {
+                Text("Koneksi Perangkat", color = content.copy(alpha = 0.85f), fontSize = 12.sp)
+                Text(title, color = content, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+            Surface(
+                color = if (online) Color.White.copy(alpha = 0.2f) else BrandBlue.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text(
+                    action.uppercase(),
+                    color = if (online) Color.White else BrandBlue,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                 )
             }
         }
+    }
+}
+
+/** Daftar alat DriveSafe hasil pencarian. Ketuk salah satu untuk menyambung. */
+@Composable
+private fun DevicePicker(ui: DeviceUiState, hasScanned: Boolean, onConnect: (BleDevice) -> Unit) {
+    val scanning = ui.connection == ConnectionState.SCANNING
+    val connecting = ui.connection == ConnectionState.CONNECTING || ui.connection == ConnectionState.CONNECTED
+    if (connecting) return
+
+    when {
+        ui.scanResults.isNotEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Perangkat DriveSafe ditemukan",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                color = TextPrimary
+            )
+            ui.scanResults.forEach { device ->
+                DsCard(onClick = { onConnect(device) }, contentPadding = 14.dp) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            Modifier
+                                .size(40.dp)
+                                .background(BrandBlue.copy(alpha = 0.12f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.Bluetooth, contentDescription = null, tint = BrandBlue, modifier = Modifier.size(22.dp))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(device.name ?: "DriveSafe", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = TextPrimary)
+                            Text(signalLabel(device.rssi), fontSize = 13.sp, color = TextSecondary)
+                        }
+                        Text("SAMBUNG", color = BrandBlue, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        scanning -> Text(
+            "Mencari perangkat DriveSafe di sekitar… Pastikan alat menyala dan dekat dengan HP.",
+            fontSize = 13.sp,
+            color = TextSecondary
+        )
+
+        hasScanned -> Text(
+            "Tidak ada perangkat DriveSafe ditemukan. Pastikan alat menyala, lalu ketuk CARI lagi.",
+            fontSize = 13.sp,
+            color = TextSecondary
+        )
     }
 }
 

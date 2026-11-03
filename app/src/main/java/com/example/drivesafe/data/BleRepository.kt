@@ -160,21 +160,6 @@ class BleRepository(
         return confirmed != null
     }
 
-    /**
-     * Minta alat langsung mengirim SMS tanpa menunggu hitung mundur habis.
-     * @return true kalau STATUS berpindah ke ALERT (atau sudah lewat) dalam beberapa detik.
-     */
-    suspend fun sendNow(): Boolean {
-        if (!bleManager.sendCommand(BleCommands.SEND_NOW)) return false
-
-        val confirmed = withTimeoutOrNull(CANCEL_CONFIRM_TIMEOUT_MS) {
-            bleManager.status.first {
-                it?.status == DeviceStatus.ALERT || it?.status == DeviceStatus.COOLDOWN
-            }
-        }
-        return confirmed != null
-    }
-
     // ---------- Sinkronisasi ----------
 
     /**
