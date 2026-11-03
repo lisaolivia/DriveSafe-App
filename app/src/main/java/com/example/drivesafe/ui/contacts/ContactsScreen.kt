@@ -4,53 +4,72 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.drivesafe.ble.BleJsonParser
 import com.example.drivesafe.model.DeviceConfig
 import com.example.drivesafe.model.DeviceConfigSnapshot
 import com.example.drivesafe.model.EmergencyContact
+import com.example.drivesafe.ui.components.DsCard
+import com.example.drivesafe.ui.components.DsTextField
+import com.example.drivesafe.ui.components.NoticeBox
 import com.example.drivesafe.ui.components.Pill
+import com.example.drivesafe.ui.components.PrimaryButton
+import com.example.drivesafe.ui.components.SecondaryButton
 import com.example.drivesafe.ui.components.SectionCard
 import com.example.drivesafe.ui.components.StatusColors
+import com.example.drivesafe.ui.components.profileLabel
+import com.example.drivesafe.ui.theme.BrandBlue
+import com.example.drivesafe.ui.theme.BrandBlueSoft
+import com.example.drivesafe.ui.theme.DangerRed
+import com.example.drivesafe.ui.theme.DangerRedDark
+import com.example.drivesafe.ui.theme.DangerRedSoft
+import com.example.drivesafe.ui.theme.SurfaceWhite
+import com.example.drivesafe.ui.theme.TextPrimary
+import com.example.drivesafe.ui.theme.TextSecondary
+import com.example.drivesafe.ui.theme.WarnAmber
+import com.example.drivesafe.ui.theme.WarnAmberSoft
 import com.example.drivesafe.viewmodel.DeviceUiState
-
-private sealed interface ContactDialogState {
-    object Add : ContactDialogState
-    data class Edit(val contact: EmergencyContact) : ContactDialogState
-}
 
 @Composable
 fun ContactsScreen(
@@ -65,55 +84,190 @@ fun ContactsScreen(
     onImport: () -> Unit,
     onRefresh: () -> Unit
 ) {
-    var dialog by remember { mutableStateOf<ContactDialogState?>(null) }
+    var editMode by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<EmergencyContact?>(null) }
+
+    // Form tambah / ubah (mode edit)
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var name by rememberSaveable { mutableStateOf("") }
+    var phone by rememberSaveable { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun resetForm() {
+        editingId = null
+        name = ""
+        phone = ""
+        error = null
+    }
 
     val contacts = config.contacts.sortedBy { it.priority }
     val max = BleJsonParser.MAX_CONTACTS
-    val snapshot = ui.deviceConfig
+    val full = contacts.size >= max
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
 
-        item {
-            Text("Kontak darurat", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        }
-
-        // ---- Ringkasan + sinkronisasi ----
-        item {
-            SectionCard("Status kontak") {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${contacts.size}/$max kontak", style = MaterialTheme.typography.titleLarge)
-                    if (needsSync) Pill("Belum dikirim ke alat", StatusColors.Warn)
-                    else Pill("Tersinkron", StatusColors.Ok)
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { dialog = ContactDialogState.Add }, enabled = contacts.size < max) {
-                        Text("Tambah kontak")
+        // ---- Judul ----
+        Column {
+            Text(
+                "DAFTAR AKTIF",
+                color = BrandBlue,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                letterSpacing = 1.sp
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Kontak Darurat",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                if (editMode) {
+                    IconButton(onClick = { editMode = false; resetForm() }) {
+                        Icon(Icons.Filled.Check, contentDescription = "Selesai mengedit", tint = BrandBlue)
                     }
-                    FilledTonalButton(onClick = onSync, enabled = ui.isOnline && !ui.isSyncing) {
-                        Text(if (ui.isSyncing) "Mengirim..." else "Kirim ke alat")
+                } else {
+                    Surface(color = BrandBlueSoft, shape = RoundedCornerShape(50)) {
+                        Text(
+                            "${contacts.size}/$max",
+                            color = BrandBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
                     }
-                }
-
-                if (!ui.isOnline) {
-                    Text(
-                        "Hubungkan alat di tab Alat untuk mengirim kontak. Perubahan tetap tersimpan di aplikasi.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
 
-        // ---- Isi yang tersimpan di alat (dibaca dari alat) ----
-        item {
+        // ---- Daftar kontak ----
+        if (contacts.isEmpty()) {
+            DsCard(contentPadding = 20.dp) {
+                Text("Belum ada kontak", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextPrimary)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Tambahkan orang yang harus dihubungi kalau terjadi kecelakaan. " +
+                            "Kontak utama menerima SMS dan panggilan tak terjawab.",
+                    fontSize = 13.sp,
+                    color = TextSecondary
+                )
+            }
+        } else {
+            contacts.forEach { contact ->
+                ContactCard(
+                    contact = contact,
+                    editMode = editMode,
+                    selected = contact.id == editingId,
+                    onClick = if (editMode) {
+                        {
+                            editingId = contact.id
+                            name = contact.name
+                            phone = contact.phone
+                            error = null
+                        }
+                    } else null,
+                    onPrimary = { onPrimary(contact.id) },
+                    onDelete = { deleting = contact }
+                )
+            }
+        }
+
+        if (editMode) {
+            // ---- Form ----
+            DsTextField(
+                label = "Nama Kontak",
+                value = name,
+                onValueChange = { name = it; error = null },
+                placeholder = "Contoh: Ayah",
+                filled = true
+            )
+            DsTextField(
+                label = "Nomor",
+                value = phone,
+                onValueChange = { phone = it; error = null },
+                placeholder = "Contoh: +62 812-3452-7892",
+                keyboardType = KeyboardType.Phone,
+                filled = true
+            )
+            error?.let { Text(it, color = DangerRed, fontSize = 13.sp) }
+
+            val editing = editingId
+            if (editing != null) {
+                PrimaryButton(
+                    "Simpan Perubahan",
+                    icon = Icons.Outlined.Save,
+                    onClick = {
+                        onUpdate(editing, name, phone) { result ->
+                            if (result == null) resetForm() else error = result
+                        }
+                    }
+                )
+                TextButton(onClick = { resetForm() }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("Batal ubah", color = TextSecondary)
+                }
+            } else {
+                PrimaryButton(
+                    if (full) "Kontak penuh ($max/$max)" else "Tambah Kontak Baru",
+                    icon = Icons.Outlined.PersonAdd,
+                    enabled = !full,
+                    onClick = {
+                        onAdd(name, phone) { result ->
+                            if (result == null) resetForm() else error = result
+                        }
+                    }
+                )
+            }
+            Text(
+                "Ketuk kartu kontak untuk mengubahnya, ★ untuk menjadikannya kontak utama.",
+                fontSize = 12.sp,
+                color = TextSecondary
+            )
+        } else {
+            PrimaryButton("Tambah/Edit Kontak", icon = Icons.Filled.Edit, onClick = { editMode = true })
+        }
+
+        // ---- Sinkronisasi ----
+        if (needsSync && contacts.isNotEmpty()) {
+            NoticeBox(
+                icon = Icons.Outlined.Sync,
+                title = "Belum dikirim ke alat",
+                body = if (ui.isOnline) "Kirim supaya alat memakai daftar kontak terbaru."
+                else "Hubungkan alat di tab IoT untuk mengirim. Perubahan tetap tersimpan di aplikasi.",
+                container = WarnAmberSoft,
+                accent = WarnAmber,
+                action = if (ui.isOnline) {
+                    {
+                        Spacer(Modifier.height(6.dp))
+                        PrimaryButton(
+                            if (ui.isSyncing) "Mengirim…" else "Kirim ke Alat",
+                            onClick = onSync,
+                            loading = ui.isSyncing,
+                            modifier = Modifier.height(40.dp)
+                        )
+                    }
+                } else null
+            )
+        }
+
+        if (!editMode) {
+            NoticeBox(
+                icon = Icons.Filled.Info,
+                title = "Keamanan Utama Anda",
+                body = "Kontak di atas akan menerima lokasi GPS secara otomatis melalui pesan teks (SMS) " +
+                        "segera setelah guncangan hebat atau kecelakaan terdeteksi.",
+                container = Color(0xFFDCE3FB),
+                accent = BrandBlueDarkish
+            )
+
             DeviceContentsCard(
-                snapshot = snapshot,
+                snapshot = ui.deviceConfig,
                 local = config,
                 online = ui.isOnline,
                 isReading = ui.isReadingConfig,
@@ -121,71 +275,74 @@ fun ContactsScreen(
                 onImport = onImport
             )
         }
-
-        // ---- Daftar kontak di aplikasi ----
-        item {
-            Text(
-                "Kontak di aplikasi",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (contacts.isEmpty()) {
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Belum ada kontak", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Tambahkan orang yang harus dihubungi kalau terjadi kecelakaan. " +
-                                    "Kontak pertama menerima SMS dan panggilan tak terjawab.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-            }
-        } else {
-            items(contacts, key = { it.id }) { contact ->
-                ContactRow(
-                    contact = contact,
-                    onEdit = { dialog = ContactDialogState.Edit(contact) },
-                    onDelete = { deleting = contact },
-                    onPrimary = { onPrimary(contact.id) }
-                )
-            }
-        }
-    }
-
-    // ---- Dialog tambah / ubah ----
-    when (val d = dialog) {
-        ContactDialogState.Add -> ContactDialog(
-            title = "Tambah kontak",
-            initial = null,
-            onSubmit = onAdd,
-            onDismiss = { dialog = null }
-        )
-        is ContactDialogState.Edit -> ContactDialog(
-            title = "Ubah kontak",
-            initial = d.contact,
-            onSubmit = { name, phone, done -> onUpdate(d.contact.id, name, phone, done) },
-            onDismiss = { dialog = null }
-        )
-        null -> Unit
     }
 
     // ---- Konfirmasi hapus ----
     deleting?.let { target ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Hapus kontak?") },
+            containerColor = SurfaceWhite,
+            title = { Text("Hapus kontak?", fontWeight = FontWeight.SemiBold) },
             text = { Text("${target.name} tidak akan menerima SMS darurat lagi setelah dikirim ke alat.") },
             confirmButton = {
                 TextButton(onClick = {
                     onDelete(target.id)
+                    if (editingId == target.id) resetForm()
                     deleting = null
-                }) { Text("Hapus") }
+                }) { Text("Hapus", color = DangerRed, fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Batal") } }
         )
+    }
+}
+
+private val BrandBlueDarkish = Color(0xFF1E40AF)
+
+@Composable
+private fun ContactCard(
+    contact: EmergencyContact,
+    editMode: Boolean,
+    selected: Boolean,
+    onClick: (() -> Unit)?,
+    onPrimary: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val isPrimary = contact.priority == 1
+
+    DsCard(
+        onClick = onClick,
+        border = if (selected) BrandBlue else com.example.drivesafe.ui.theme.BorderLight,
+        contentPadding = 16.dp
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                Modifier
+                    .size(46.dp)
+                    .background(DangerRedSoft, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.AccountTree, contentDescription = null, tint = DangerRedDark, modifier = Modifier.size(22.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(contact.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
+                    if (isPrimary) Pill("Utama", StatusColors.Ok)
+                }
+                Text(contact.phone, fontSize = 15.sp, color = TextSecondary)
+            }
+            if (editMode) {
+                IconButton(onClick = onPrimary, enabled = !isPrimary) {
+                    Icon(
+                        if (isPrimary) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                        contentDescription = "Jadikan kontak utama",
+                        tint = if (isPrimary) WarnAmber else TextSecondary
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "Hapus", tint = TextSecondary)
+                }
+            }
+        }
     }
 }
 
@@ -198,163 +355,57 @@ private fun DeviceContentsCard(
     onRefresh: () -> Unit,
     onImport: () -> Unit
 ) {
-    SectionCard("Tersimpan di alat") {
+    SectionCard("Tersimpan di Alat") {
 
         if (snapshot == null) {
             Text(
-                if (online) "Isi alat belum dibaca." else "Hubungkan alat di tab Alat untuk melihat isinya.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (online) "Isi alat belum dibaca." else "Hubungkan alat di tab IoT untuk melihat isinya.",
+                fontSize = 13.sp,
+                color = TextSecondary
             )
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "${snapshot.contactCount}/${snapshot.maxContacts} kontak",
-                    style = MaterialTheme.typography.titleLarge
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = TextPrimary
                 )
                 if (snapshot.matches(local)) Pill("Sama dengan aplikasi", StatusColors.Ok)
                 else Pill("Beda dengan aplikasi", StatusColors.Warn)
             }
-
-            Text("Nama alat: ${snapshot.deviceName.ifBlank { "-" }}", style = MaterialTheme.typography.bodyMedium)
-            Text("Pemilik: ${snapshot.owner.ifBlank { "-" }}", style = MaterialTheme.typography.bodyMedium)
             Text(
-                "Kendaraan: ${snapshot.profile.ifBlank { "-" }} · hitung mundur ${snapshot.countdownSeconds} detik",
-                style = MaterialTheme.typography.bodyMedium
+                "Pengendara: ${snapshot.owner.ifBlank { "-" }} · ${profileLabel(snapshot.profile)} · " +
+                        "hitung mundur ${snapshot.countdownSeconds} dtk",
+                fontSize = 13.sp,
+                color = TextSecondary
             )
-
-            if (snapshot.contacts.isEmpty()) {
-                Text(
-                    "Belum ada kontak di alat.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                snapshot.contacts.sortedBy { it.priority }.forEach {
-                    Text(
-                        "${it.priority}. ${it.name} - ${it.phone}",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
+            snapshot.contacts.sortedBy { it.priority }.forEach {
+                Text("${it.priority}. ${it.name} — ${it.phone}", fontSize = 14.sp, color = TextPrimary)
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = onRefresh, enabled = online && !isReading) {
-                Text(
-                    when {
-                        isReading -> "Membaca..."
-                        snapshot == null -> "Baca isi alat"
-                        else -> "Baca ulang"
-                    }
-                )
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SecondaryButton(
+                when {
+                    isReading -> "Membaca…"
+                    snapshot == null -> "Baca isi alat"
+                    else -> "Baca ulang"
+                },
+                onClick = onRefresh,
+                enabled = online && !isReading,
+                icon = Icons.Outlined.Sync,
+                modifier = Modifier.weight(1f)
+            )
             if (snapshot != null && !snapshot.matches(local)) {
-                TextButton(onClick = onImport, enabled = online && !isReading) {
-                    Text("Pakai data alat")
-                }
+                SecondaryButton(
+                    "Pakai data alat",
+                    onClick = onImport,
+                    enabled = online && !isReading,
+                    icon = Icons.Outlined.SystemUpdateAlt,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
-}
-
-@Composable
-private fun ContactRow(
-    contact: EmergencyContact,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onPrimary: () -> Unit
-) {
-    val isPrimary = contact.priority == 1
-
-    Card(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    contact.priority.toString(),
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-
-            Column(Modifier.weight(1f)) {
-                Text(contact.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(contact.phone, style = MaterialTheme.typography.bodyMedium)
-                if (isPrimary) {
-                    Text(
-                        "Utama · ditelepon setelah SMS",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = StatusColors.Ok
-                    )
-                }
-            }
-
-            if (!isPrimary) {
-                IconButton(onClick = onPrimary) {
-                    Icon(Icons.Filled.Star, contentDescription = "Jadikan kontak utama")
-                }
-            }
-            IconButton(onClick = onEdit) {
-                Icon(Icons.Filled.Edit, contentDescription = "Ubah")
-            }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Hapus")
-            }
-        }
-    }
-}
-
-@Composable
-private fun ContactDialog(
-    title: String,
-    initial: EmergencyContact?,
-    onSubmit: (String, String, (String?) -> Unit) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var phone by remember { mutableStateOf(initial?.phone ?: "") }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Nama (maks ${BleJsonParser.MAX_FIELD_BYTES} karakter)") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = phone,
-                    onValueChange = { phone = it },
-                    label = { Text("Nomor, contoh +628123456789") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onSubmit(name, phone) { result ->
-                    if (result == null) onDismiss() else error = result
-                }
-            }) { Text("Simpan") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
-    )
 }

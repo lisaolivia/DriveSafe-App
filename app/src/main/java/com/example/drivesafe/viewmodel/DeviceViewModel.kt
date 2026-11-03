@@ -19,8 +19,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Hitung mundur kecelakaan. Non-null hanya saat st == COUNTDOWN. */
 data class CountdownUi(
@@ -44,7 +46,10 @@ data class DeviceUiState(
     /** Isi CONFIG yang dibaca dari alat (firmware 1.1.1+). null = belum terbaca. */
     val deviceConfig: DeviceConfigSnapshot? = null,
     val isReadingConfig: Boolean = false,
-    val isCheckingBalance: Boolean = false
+    val isCheckingBalance: Boolean = false,
+    /** Waktu (epoch ms) alarm dibatalkan sebelum SMS terkirim. Non-null = tampilkan layar "False alarm". */
+    val cancelledAt: Long? = null,
+    val isSendingNow: Boolean = false
 ) {
     val isOnline: Boolean get() = connection == ConnectionState.READY
 }
@@ -62,6 +67,10 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
 
     private var peakCountdown = 0
     private var wasReady = false
+    private var previousStatus: DeviceStatus? = null
+
+    /** Kejadian yang sedang berjalan sudah sampai tahap kirim SMS (ALERT terlihat atau EVENT datang). */
+    private var incidentEscalated = false
 
     init {
         viewModelScope.launch {
@@ -83,11 +92,28 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repo.status.collect { st ->
                 val countdown = buildCountdown(st)
-                _ui.update { it.copy(status = st, countdown = countdown) }
+                val now = st?.status
+                if (now == DeviceStatus.COUNTDOWN && previousStatus != DeviceStatus.COUNTDOWN) {
+                    incidentEscalated = false   // kejadian baru
+                }
+                if (now == DeviceStatus.ALERT) incidentEscalated = true
+                val cancelled = isCancelTransition(previousStatus, now)
+                previousStatus = now ?: previousStatus
+                _ui.update {
+                    it.copy(
+                        status = st,
+                        countdown = countdown,
+                        cancelledAt = if (cancelled) System.currentTimeMillis() else it.cancelledAt
+                    )
+                }
             }
         }
         viewModelScope.launch {
-            repo.lastEvent.collect { v -> _ui.update { it.copy(lastEvent = v) } }
+            repo.lastEvent.collect { v ->
+                // EVENT hanya dikirim alat kalau SMS benar-benar dikirim, jadi bukan pembatalan
+                if (v != null) incidentEscalated = true
+                _ui.update { it.copy(lastEvent = v, cancelledAt = if (v != null) null else it.cancelledAt) }
+            }
         }
         viewModelScope.launch {
             repo.scanResults.collect { v -> _ui.update { it.copy(scanResults = v) } }
@@ -99,6 +125,15 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
             repo.messages.collect { _messages.emit(it) }
         }
     }
+
+    /**
+     * Hanya CANCELLED yang eksplisit dianggap pembatalan. COUNTDOWN -> COOLDOWN TIDAK dipakai:
+     * saat mengirim SMS/missed call alat sibuk dan STATUS ALERT sering tidak sempat terkirim,
+     * jadi aplikasi melihat COUNTDOWN langsung ke COOLDOWN padahal SMS sudah terkirim.
+     */
+    private fun isCancelTransition(from: DeviceStatus?, to: DeviceStatus?): Boolean =
+        to == DeviceStatus.CANCELLED && from != to && !incidentEscalated &&
+                (from == DeviceStatus.COUNTDOWN || from == DeviceStatus.ALERT)
 
     private fun buildCountdown(st: DeviceStatusPayload?): CountdownUi? {
 
@@ -147,16 +182,66 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelAlarm() {
         viewModelScope.launch {
             val confirmed = repo.cancelAlarm()
-            if (!confirmed) {
+            // repo menganggap COOLDOWN juga konfirmasi; pastikan SMS memang belum dikirim
+            if (confirmed && !incidentEscalated && _ui.value.lastEvent == null) {
+                _ui.update { it.copy(cancelledAt = it.cancelledAt ?: System.currentTimeMillis()) }
+            }
+            if (confirmed) {
+                recalibrateAfterCancel()
+            } else {
                 _messages.emit(
-                    "Pembatalan belum terkonfirmasi. Tekan tombol fisik di alat untuk membatalkan."
+                    "Pembatalan belum terkonfirmasi. Tekan SAYA BAIK-BAIK SAJA sekali lagi."
                 )
             }
         }
     }
 
+    /**
+     * Guncangan yang memicu alarm bisa menggeser acuan sensor, jadi setelah "Saya baik-baik saja"
+     * alat dikalibrasi ulang. RECAL baru dikirim setelah alat kembali MONITOR (selesai cooldown).
+     */
+    private suspend fun recalibrateAfterCancel() {
+        val backToMonitor = withTimeoutOrNull(RECAL_AFTER_CANCEL_TIMEOUT_MS) {
+            repo.status.first { it?.status == DeviceStatus.MONITOR }
+        }
+        if (backToMonitor == null) {
+            _messages.emit("Alat belum kembali memantau. Kalibrasi ulang manual dari tab IoT.")
+            return
+        }
+        val ok = repo.sendCommand(BleCommands.RECAL)
+        _messages.emit(
+            if (ok) "Kalibrasi ulang dimulai, letakkan alat diam di permukaan datar"
+            else "Gagal memulai kalibrasi ulang. Coba dari tab IoT."
+        )
+    }
+
     /** Tutup layar notifikasi darurat (juga setelah "Saya baik-baik saja"). */
     fun dismissEvent() = repo.clearEvent()
+
+    /** Tutup layar "False alarm dibatalkan". */
+    fun dismissCancelled() {
+        _ui.update { it.copy(cancelledAt = null) }
+        repo.clearEvent()
+    }
+
+    /**
+     * Tombol "KIRIM SEKARANG": lewati sisa hitung mundur. Butuh firmware yang mengenal SENDNOW;
+     * kalau alat tidak pindah ke ALERT, SMS tetap terkirim otomatis saat hitung mundur habis.
+     */
+    fun sendNow() {
+        if (_ui.value.isSendingNow) return
+        _ui.update { it.copy(isSendingNow = true) }
+
+        viewModelScope.launch {
+            val confirmed = repo.sendNow()
+            _ui.update { it.copy(isSendingNow = false) }
+            if (!confirmed) {
+                _messages.emit(
+                    "Alat belum merespons KIRIM SEKARANG. SMS tetap dikirim otomatis saat hitung mundur habis."
+                )
+            }
+        }
+    }
 
     // ---------- Baca isi alat ----------
 
@@ -251,5 +336,6 @@ class DeviceViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val MIN_CANCEL_ELAPSED_SECONDS = 3
+        const val RECAL_AFTER_CANCEL_TIMEOUT_MS = 120_000L
     }
 }

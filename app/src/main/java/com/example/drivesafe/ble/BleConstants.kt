@@ -42,6 +42,9 @@ object BleCommands {
     const val SIMCRASH = "SIMCRASH"
     const val CLEARCON = "CLEARCON"
 
+    /** Lewati sisa hitung mundur dan kirim SMS darurat sekarang (perlu didukung firmware). */
+    const val SEND_NOW = "SENDNOW"
+
     /** Cek pulsa lewat USSD. Kodenya ikut dikirim karena beda tiap operator. */
     fun pulsa(ussdCode: String) = "PULSA $ussdCode"
 }
